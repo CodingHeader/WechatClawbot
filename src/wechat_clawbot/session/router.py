@@ -53,13 +53,13 @@ class SessionRouter:
 
         if msg.message_type != MessageType.USER:
             return ""
-        if msg.msg_id and db.is_message_processed(self.settings.db_path, msg.msg_id):
-            logger.debug("重复消息已跳过 msg_id=%s", msg.msg_id)
+        if msg.message_id and db.is_message_processed(self.settings.db_path, str(msg.message_id)):
+            logger.debug("重复消息已跳过 message_id=%s", msg.message_id)
             return ""
 
         self._remember_context_token(account_id, msg.from_user_id, msg.context_token)
 
-        if msg.msg_id:
+        if msg.message_id:
             db.mark_message_processed(self.settings.db_path, account_id, msg)
 
         text = self._extract_text(msg)

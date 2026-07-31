@@ -56,7 +56,9 @@ async def test_send_message_passes_context_token(client: WeChatClient) -> None:
     payload = json.loads(route.calls[0].request.content)
     assert payload["msg"]["context_token"] == "ctx-abc"
     assert payload["msg"]["to_user_id"] == "user-1"
-    assert payload["msg"]["message_type"] == "BOT"
+    assert payload["msg"]["message_type"] == 2  # MessageType.BOT = 2
+    assert payload["msg"]["message_state"] == 2  # MessageState.FINISH = 2
+    assert payload["msg"]["item_list"][0]["type"] == 1  # MessageItemType.TEXT = 1
     assert payload["msg"]["item_list"][0]["text_item"]["text"] == "你好"
 
 

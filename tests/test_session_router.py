@@ -37,9 +37,9 @@ class FakeAI:
         return reply
 
 
-def _make_msg(msg_id: str, user: str, text: str, msg_type: MessageType = MessageType.USER) -> WeChatMessage:
+def _make_msg(message_id: int, user: str, text: str, msg_type: MessageType = MessageType.USER) -> WeChatMessage:
     return WeChatMessage(
-        msg_id=msg_id,
+        message_id=message_id,
         from_user_id=user,
         message_type=msg_type,
         item_list=[MessageItem(type=MessageItemType.TEXT, text_item=TextItem(text=text))],
@@ -64,7 +64,7 @@ async def test_dedup_same_msg_id(env: tuple[SessionRouter, SessionStore, FakeAI]
     """相同 msg_id 只处理一次。"""
 
     router, _, ai = env
-    msg = _make_msg("m1", "user-a", "你好")
+    msg = _make_msg(1, "user-a", "你好")
     assert await router.handle("acc-1", msg) == "回复:你好"
     assert await router.handle("acc-1", msg) == ""
     assert len(ai.calls) == 1
@@ -74,8 +74,8 @@ async def test_user_isolation(env: tuple[SessionRouter, SessionStore, FakeAI]) -
     """不同用户的会话历史互不串扰。"""
 
     router, store, _ = env
-    await router.handle("acc-1", _make_msg("m1", "user-a", "A的消息"))
-    await router.handle("acc-1", _make_msg("m2", "user-b", "B的消息"))
+    await router.handle("acc-1", _make_msg(1, "user-a", "A的消息"))
+    await router.handle("acc-1", _make_msg(2, "user-b", "B的消息"))
     sa = store.get_session("acc-1", "user-a")
     sb = store.get_session("acc-1", "user-b")
     assert all("B" not in t.content for t in sa.history)
@@ -86,9 +86,9 @@ async def test_clear_only_current_user(env: tuple[SessionRouter, SessionStore, F
     """/clear 只清空当前用户。"""
 
     router, store, _ = env
-    await router.handle("acc-1", _make_msg("m1", "user-a", "hello"))
-    await router.handle("acc-1", _make_msg("m2", "user-b", "world"))
-    reply = await router.handle("acc-1", _make_msg("m3", "user-a", "/clear"))
+    await router.handle("acc-1", _make_msg(1, "user-a", "hello"))
+    await router.handle("acc-1", _make_msg(2, "user-b", "world"))
+    reply = await router.handle("acc-1", _make_msg(3, "user-a", "/clear"))
     assert reply == "会话已清空。"
     assert store.get_session("acc-1", "user-a").history == []
     assert len(store.get_session("acc-1", "user-b").history) == 2
@@ -98,7 +98,7 @@ async def test_bot_message_ignored(env: tuple[SessionRouter, SessionStore, FakeA
     """BOT 类型消息不进入 AI 流程。"""
 
     router, _, ai = env
-    reply = await router.handle("acc-1", _make_msg("m9", "user-a", "hi", MessageType.BOT))
+    reply = await router.handle("acc-1", _make_msg(9, "user-a", "hi", MessageType.BOT))
     assert reply == ""
     assert ai.calls == []
 
@@ -107,7 +107,7 @@ async def test_context_token_cached_per_user(env: tuple[SessionRouter, SessionSt
     """context_token 按 (账号, 用户) 维度缓存。"""
 
     router, _, _ = env
-    await router.handle("acc-1", _make_msg("m1", "user-a", "hi"))
+    await router.handle("acc-1", _make_msg(1, "user-a", "hi"))
     assert router.get_context_token("acc-1", "user-a") == "ctx-1"
     assert router.get_context_token("acc-1", "user-b") == ""
     assert router.get_context_token("acc-2", "user-a") == ""

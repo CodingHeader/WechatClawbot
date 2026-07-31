@@ -3,28 +3,10 @@
 from __future__ import annotations
 
 import base64
-import os
 import random
-from enum import Enum
 from typing import Any
 
-
-class MessageType(str, Enum):
-    USER = "USER"
-    BOT = "BOT"
-
-
-class MessageState(str, Enum):
-    FINISH = "FINISH"
-    PROCESSING = "PROCESSING"
-
-
-class MessageItemType(str, Enum):
-    TEXT = "TEXT"
-    IMAGE = "IMAGE"
-    VOICE = "VOICE"
-    VIDEO = "VIDEO"
-    FILE = "FILE"
+from ..models import MessageItemType, MessageState, MessageType  # noqa: F401
 
 
 def random_wechat_uin() -> str:

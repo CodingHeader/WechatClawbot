@@ -30,22 +30,29 @@ class Account(BaseModel):
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
-class MessageType(str, Enum):
-    USER = "USER"
-    BOT = "BOT"
+class MessageType(int, Enum):
+    """iLink 消息方向枚举（协议为整数）。"""
+
+    USER = 1
+    BOT = 2
 
 
-class MessageState(str, Enum):
-    FINISH = "FINISH"
-    PROCESSING = "PROCESSING"
+class MessageState(int, Enum):
+    """iLink 消息状态枚举（协议为整数）。"""
+
+    NEW = 0
+    GENERATING = 1
+    FINISH = 2
 
 
-class MessageItemType(str, Enum):
-    TEXT = "TEXT"
-    IMAGE = "IMAGE"
-    VOICE = "VOICE"
-    VIDEO = "VIDEO"
-    FILE = "FILE"
+class MessageItemType(int, Enum):
+    """iLink 消息体类型枚举（协议为整数）。"""
+
+    TEXT = 1
+    IMAGE = 2
+    VOICE = 3
+    FILE = 4
+    VIDEO = 5
 
 
 class TextItem(BaseModel):
@@ -58,12 +65,15 @@ class MessageItem(BaseModel):
 
 
 class WeChatMessage(BaseModel):
-    """iLink 消息结构。"""
+    """iLink 消息结构（与 getupdates 响应对齐）。"""
 
-    msg_id: str = ""
+    seq: int = 0
+    message_id: int = 0
     from_user_id: str = ""
     to_user_id: str = ""
     client_id: str = ""
+    create_time_ms: int = 0
+    session_id: str = ""
     message_type: MessageType = MessageType.USER
     message_state: MessageState = MessageState.FINISH
     item_list: list[MessageItem] = Field(default_factory=list)

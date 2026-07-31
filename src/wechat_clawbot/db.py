@@ -200,7 +200,7 @@ def mark_message_processed(db_path: Path, account_id: str, msg: WeChatMessage) -
     try:
         conn.execute(
             "INSERT OR IGNORE INTO messages (id, account_id, from_user_id, msg_type, created_at) VALUES (?, ?, ?, ?, ?)",
-            (msg.msg_id, account_id, msg.from_user_id, msg.message_type.value, _now()),
+            (str(msg.message_id), account_id, msg.from_user_id, str(msg.message_type.value), _now()),
         )
         conn.commit()
     finally:

@@ -188,7 +188,10 @@ class ClawBotApp:
                 buf = new_buf
                 db.update_get_updates_buf(self.settings.db_path, account.id, buf)
 
-            for raw in data.get("msgs", []):
+            msgs = data.get("msgs", [])
+            if msgs:
+                logger.info("账号 %s 收到 %d 条新消息", account.id, len(msgs))
+            for raw in msgs:
                 await self._dispatch(account, client, raw)
 
     @staticmethod
@@ -206,12 +209,17 @@ class ClawBotApp:
             logger.warning("无法解析的消息已丢弃: %s", raw)
             return
 
+        logger.info(
+            "消息 account=%s from=%s type=%s id=%s",
+            account.id, msg.from_user_id, msg.message_type.name, msg.message_id,
+        )
         try:
             reply = await self.router.handle(account.id, msg)
         except Exception:
             logger.exception("消息处理失败 account=%s", account.id)
             return
         if not reply:
+            logger.info("无需回复 account=%s from=%s", account.id, msg.from_user_id)
             return
 
         try:
@@ -220,5 +228,6 @@ class ClawBotApp:
                 reply,
                 context_token=self.router.get_context_token(account.id, msg.from_user_id),
             )
+            logger.info("回复已发送 account=%s to=%s len=%d", account.id, msg.from_user_id, len(reply))
         except Exception:
             logger.exception("回复发送失败 account=%s user=%s", account.id, msg.from_user_id)
