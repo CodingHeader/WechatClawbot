@@ -14,8 +14,10 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    base_url: str = Field(default="https://ilink.weixin.qq.com", alias="BASE_URL")
-    bot_type: str = Field(default="weixin", alias="BOT_TYPE")
+    base_url: str = Field(default="https://ilinkai.weixin.qq.com", alias="BASE_URL")
+    bot_type: str = Field(default="3", alias="BOT_TYPE")
+    """iLink 登录二维码的 bot_type，官方规范硬编码为 3。"""
+
     long_poll_timeout_ms: int = Field(default=35000, alias="LONG_POLL_TIMEOUT_MS")
 
     db_path: Path = Field(default=Path("data/clawbot.db"), alias="DB_PATH")

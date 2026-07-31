@@ -109,11 +109,18 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
     async def login_start() -> dict[str, str]:
         """发起一次扫码登录：返回 login_id 与二维码图片地址。"""
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            qr = await fetch_qrcode(settings.base_url, settings.bot_type, client)
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                qr = await fetch_qrcode(settings.base_url, settings.bot_type, client)
+        except Exception as exc:
+            logger.exception("获取登录二维码失败 base_url=%s", settings.base_url)
+            raise HTTPException(
+                status_code=502,
+                detail=f"无法连接 iLink 登录服务（{settings.base_url}）：{type(exc).__name__}",
+            ) from exc
         session = LoginSession(
-            ticket=qr.get("ticket", ""),
-            qr_string=qr.get("qrcode", qr.get("url", "")),
+            ticket=qr.get("qrcode", ""),
+            qr_string=qr.get("qrcode_img_content", qr.get("qrcode", "")),
         )
         logins[session.id] = session
         asyncio.create_task(_poll_login(session))
@@ -132,10 +139,16 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
                     continue
                 session.status = data.get("status", "wait")
                 if session.status == "confirmed":
+                    bot_id = (
+                        data.get("ilink_bot_id")
+                        or data.get("ilink_user_id")
+                        or data.get("bot_id")
+                        or ""
+                    )
                     account = Account(
-                        id=data.get("ilink_bot_id", ""),
+                        id=bot_id,
                         bot_token=data.get("bot_token", ""),
-                        ilink_bot_id=data.get("ilink_bot_id", ""),
+                        ilink_bot_id=bot_id,
                         baseurl=data.get("baseurl", settings.base_url),
                         ilink_user_id=data.get("ilink_user_id", ""),
                         status=AccountStatus.ACTIVE,

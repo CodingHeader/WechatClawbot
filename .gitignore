@@ -13,3 +13,8 @@ __pycache__/
 # Node / npm（mcp-npm 子包依赖，不入库）
 node_modules/
 
+# 运行时日志与生成物（不入库）
+*.log
+scripts/login_qr.png
+scripts/login_qr_demo.png
+

@@ -26,7 +26,7 @@ cp .env.example .env
 
 | 配置项 | 说明 | 默认值 |
 |--------|------|--------|
-| `BASE_URL` | iLink 域名 | `https://ilink.weixin.qq.com` |
+| `BASE_URL` | iLink 域名 | `https://ilinkai.weixin.qq.com` |
 | `BOT_TYPE` | 二维码类型 | `weixin` |
 | `LONG_POLL_TIMEOUT_MS` | 长轮询超时 | `35000` |
 | `DB_PATH` | SQLite 路径 | `data/clawbot.db` |

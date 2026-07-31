@@ -18,10 +18,17 @@ async def fetch_qrcode(
     bot_type: str,
     client: httpx.AsyncClient,
 ) -> dict[str, Any]:
-    """获取登录二维码。"""
+    """获取登录二维码。
+
+    iLink 规范：GET /ilink/bot/get_bot_qrcode?bot_type=3（bot_type 硬编码为 3）。
+    响应含 ``qrcode``（轮询票据）与 ``qrcode_img_content``（可直接渲染的二维码图片，
+    可能是 data:image/png;base64 或 https 图片地址）。
+    """
 
     url = f"{base_url}/ilink/bot/get_bot_qrcode"
-    resp = await client.post(url, json={"bot_type": bot_type}, headers=build_headers(), timeout=15)
+    resp = await client.get(
+        url, params={"bot_type": bot_type}, headers=build_headers(), timeout=15
+    )
     resp.raise_for_status()
     data = resp.json()
     if data.get("ret", 0) != 0:
@@ -34,10 +41,15 @@ async def poll_qrcode_status(
     ticket: str,
     client: httpx.AsyncClient,
 ) -> dict[str, Any]:
-    """轮询二维码扫码状态。返回包含 status 字段的 dict。"""
+    """轮询二维码扫码状态。返回包含 status 字段的 dict。
+
+    iLink 规范：GET /ilink/bot/get_qrcode_status?qrcode=<票据>。
+    """
 
     url = f"{base_url}/ilink/bot/get_qrcode_status"
-    resp = await client.post(url, json={"ticket": ticket}, headers=build_headers(), timeout=15)
+    resp = await client.get(
+        url, params={"qrcode": ticket}, headers=build_headers(), timeout=15
+    )
     resp.raise_for_status()
     return resp.json()
 
@@ -58,7 +70,24 @@ def render_qr_terminal(qr_string: str) -> str:
 
 
 def render_qr_png(qr_string: str) -> bytes:
-    """将二维码字符串渲染为 PNG 字节流，供 HTTP 接口返回。"""
+    """将登录二维码内容渲染为 PNG 字节流，供 HTTP 接口返回。
+
+    qr_string 支持三种形式：
+    1. ``data:image/png;base64,...`` —— 直接解码返回（iLink 返回的常见形式）。
+    2. ``http(s)://...`` 图片地址 —— 拉取后返回。
+    3. 普通文本 —— 用 qrcode 库编码为二维码（兜底）。
+    """
+
+    if qr_string.startswith("data:image"):
+        import base64
+
+        _, _, b64 = qr_string.partition(",")
+        return base64.b64decode(b64)
+
+    if qr_string.startswith("http://") or qr_string.startswith("https://"):
+        resp = httpx.get(qr_string, timeout=15.0, follow_redirects=True)
+        resp.raise_for_status()
+        return resp.content
 
     import qrcode
 
@@ -83,8 +112,8 @@ async def login(
     try:
         for attempt in range(1, max_refresh + 1):
             qr = await fetch_qrcode(settings.base_url, settings.bot_type, client)
-            ticket = qr.get("ticket", "")
-            qr_string = qr.get("qrcode", qr.get("url", ""))
+            ticket = qr.get("qrcode", "")
+            qr_string = qr.get("qrcode_img_content", qr.get("qrcode", ""))
 
             print(f"\n[auth] 请使用微信扫描二维码 (尝试 {attempt}/{max_refresh})")
             print(render_qr_terminal(qr_string))

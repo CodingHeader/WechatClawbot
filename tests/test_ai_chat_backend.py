@@ -134,7 +134,8 @@ async def test_ai_chat_falls_back_when_coze_fails(tmp_path: Path) -> None:
 async def test_ai_chat_litellm_path_when_coze_disabled(tmp_path: Path) -> None:
     """未配置 Coze 时走 litellm（用 mock 替换 _complete）。"""
 
-    settings = Settings(DB_PATH=str(tmp_path / "test.db"))
+    # 显式清空 Coze 配置，确保测试不依赖本地 .env（隔离环境）
+    settings = Settings(DB_PATH=str(tmp_path / "test.db"), COZE_PAT="", COZE_BOT_ID="")
     assert settings.use_coze is False
     db.init_db(settings.db_path)
     db.save_account(
