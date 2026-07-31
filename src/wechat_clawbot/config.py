@@ -56,6 +56,9 @@ class Settings(BaseSettings):
     session_retention_days: int = Field(default=30, alias="SESSION_RETENTION_DAYS")
     """会话与消息数据留存天数，到期自动清除（PIPL 数据最小化要求）。"""
 
+    login_max_refresh: int = Field(default=10, alias="LOGIN_MAX_REFRESH")
+    """扫码二维码过期后自动刷新的最大次数；耗尽后登录会话结束。"""
+
     def is_auth_token_weak(self) -> bool:
         """AUTH_TOKEN 为空或过短视为弱令牌，生产启动时拒绝。"""
 

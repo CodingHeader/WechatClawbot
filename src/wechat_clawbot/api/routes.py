@@ -63,13 +63,25 @@ class NotifyRequest(BaseModel):
 class LoginSession:
     """一次扫码登录的内存状态。"""
 
-    def __init__(self, ticket: str, qr_string: str) -> None:
+    def __init__(self, ticket: str, qr_string: str, max_refresh: int = 10) -> None:
         self.id = uuid.uuid4().hex
         self.ticket = ticket
         self.qr_string = qr_string
         self.status = "wait"
         self.account_id = ""
         self.error = ""
+        self.max_refresh = max_refresh
+        self.refresh_count = 0
+
+
+async def _refresh_login(session: LoginSession, settings: Settings, client: httpx.AsyncClient) -> None:
+    """重新获取二维码并重置会话状态（二维码过期自动刷新用）。"""
+
+    qr = await fetch_qrcode(settings.base_url, settings.bot_type, client)
+    session.ticket = qr.get("qrcode", "")
+    session.qr_string = qr.get("qrcode_img_content", qr.get("qrcode", ""))
+    session.status = "wait"
+    session.refresh_count += 1
 
 
 def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
@@ -106,7 +118,7 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
         return {"status": "ok"}
 
     @app.post("/accounts/login/start")
-    async def login_start() -> dict[str, str]:
+    async def login_start() -> dict[str, Any]:
         """发起一次扫码登录：返回 login_id 与二维码图片地址。"""
 
         try:
@@ -121,43 +133,79 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
         session = LoginSession(
             ticket=qr.get("qrcode", ""),
             qr_string=qr.get("qrcode_img_content", qr.get("qrcode", "")),
+            max_refresh=settings.login_max_refresh,
         )
         logins[session.id] = session
         asyncio.create_task(_poll_login(session))
-        return {"login_id": session.id, "qrcode_url": f"/accounts/login/{session.id}/qrcode.png"}
+        return {
+            "login_id": session.id,
+            "qrcode_url": f"/accounts/login/{session.id}/qrcode.png",
+            "auto_refresh": True,
+            "max_refresh": session.max_refresh,
+        }
 
     async def _poll_login(session: LoginSession) -> None:
-        """后台轮询扫码状态，confirmed 后入库并启动账号循环。"""
+        """后台轮询扫码状态，confirmed 后入库并启动账号循环。
+
+        二维码过期（expired）时自动重新获取一张新二维码并继续轮询，
+        直到扫码确认、或自动刷新次数耗尽（refresh_count > max_refresh）。
+        """
 
         async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
-            for _ in range(LOGIN_POLL_ROUNDS):
-                await asyncio.sleep(2)
-                try:
-                    data = await poll_qrcode_status(settings.base_url, session.ticket, client)
-                except Exception:
-                    logger.exception("登录状态轮询失败 login_id=%s", session.id)
-                    continue
-                session.status = data.get("status", "wait")
-                if session.status == "confirmed":
-                    bot_id = (
-                        data.get("ilink_bot_id")
-                        or data.get("ilink_user_id")
-                        or data.get("bot_id")
-                        or ""
-                    )
-                    account = Account(
-                        id=bot_id,
-                        bot_token=data.get("bot_token", ""),
-                        ilink_bot_id=bot_id,
-                        baseurl=data.get("baseurl", settings.base_url),
-                        ilink_user_id=data.get("ilink_user_id", ""),
-                        status=AccountStatus.ACTIVE,
-                    )
-                    await clawbot.activate_account(account)
-                    session.account_id = account.id
-                    logger.info("HTTP 扫码登录成功 account=%s", account.id)
+            while session.refresh_count <= session.max_refresh:
+                for _ in range(LOGIN_POLL_ROUNDS):
+                    await asyncio.sleep(2)
+                    try:
+                        data = await poll_qrcode_status(settings.base_url, session.ticket, client)
+                    except Exception:
+                        logger.exception("登录状态轮询失败 login_id=%s", session.id)
+                        continue
+                    session.status = data.get("status", "wait")
+                    if session.status == "confirmed":
+                        bot_id = (
+                            data.get("ilink_bot_id")
+                            or data.get("ilink_user_id")
+                            or data.get("bot_id")
+                            or ""
+                        )
+                        account = Account(
+                            id=bot_id,
+                            bot_token=data.get("bot_token", ""),
+                            ilink_bot_id=bot_id,
+                            baseurl=data.get("baseurl", settings.base_url),
+                            ilink_user_id=data.get("ilink_user_id", ""),
+                            status=AccountStatus.ACTIVE,
+                        )
+                        await clawbot.activate_account(account)
+                        session.account_id = account.id
+                        logger.info("HTTP 扫码登录成功 account=%s", account.id)
+                        return
+                    if session.status == "expired":
+                        break
+                else:
+                    # 轮询轮数耗尽且未确认/过期（异常场景），结束会话。
+                    session.status = "expired"
                     return
-                if session.status == "expired":
+                # 仅当 status == expired 时才会走到这里
+                if session.refresh_count >= session.max_refresh:
+                    logger.info(
+                        "二维码刷新次数耗尽，登录会话结束 login_id=%s refresh_count=%d",
+                        session.id,
+                        session.refresh_count,
+                    )
+                    session.status = "expired"
+                    return
+                try:
+                    await _refresh_login(session, settings, client)
+                    logger.info(
+                        "二维码过期，自动刷新 (第 %d/%d 次) login_id=%s",
+                        session.refresh_count,
+                        session.max_refresh,
+                        session.id,
+                    )
+                except Exception:
+                    logger.exception("二维码自动刷新失败 login_id=%s", session.id)
+                    session.status = "expired"
                     return
             session.status = "expired"
 
@@ -171,13 +219,51 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
         return Response(content=render_qr_png(session.qr_string), media_type="image/png")
 
     @app.get("/accounts/login/{login_id}/status")
-    async def login_status(login_id: str) -> dict[str, str]:
-        """查询登录状态：wait / scaned / confirmed / expired。"""
+    async def login_status(login_id: str) -> dict[str, str | int]:
+        """查询登录状态：wait / scaned / confirmed / expired。
+
+        额外返回 refresh_count / max_refresh，便于前端判断是否还能自动刷新。
+        """
 
         session = logins.get(login_id)
         if session is None:
             raise HTTPException(status_code=404, detail="login session not found")
-        return {"status": session.status, "account_id": session.account_id}
+        return {
+            "status": session.status,
+            "account_id": session.account_id,
+            "refresh_count": session.refresh_count,
+            "max_refresh": session.max_refresh,
+        }
+
+    @app.post("/accounts/login/{login_id}/refresh")
+    async def login_refresh(login_id: str) -> dict[str, str | int]:
+        """手动强制刷新二维码（无论当前是否已过期）。
+
+        自动刷新已覆盖过期场景；此端点供前端「换一张二维码」按钮或主动重试使用。
+        """
+
+        session = logins.get(login_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="login session not found")
+        if session.status == "confirmed":
+            raise HTTPException(status_code=409, detail="already confirmed")
+        if session.refresh_count >= session.max_refresh:
+            raise HTTPException(status_code=409, detail="refresh budget exhausted")
+        try:
+            async with httpx.AsyncClient(timeout=httpx.Timeout(15.0)) as client:
+                await _refresh_login(session, settings, client)
+        except Exception as exc:
+            logger.exception("手动刷新二维码失败 login_id=%s", login_id)
+            raise HTTPException(
+                status_code=502, detail=f"刷新二维码失败：{type(exc).__name__}"
+            ) from exc
+        return {
+            "login_id": session.id,
+            "qrcode_url": f"/accounts/login/{session.id}/qrcode.png",
+            "status": session.status,
+            "refresh_count": session.refresh_count,
+            "max_refresh": session.max_refresh,
+        }
 
     @app.get("/accounts")
     async def list_accounts() -> list[dict[str, Any]]:
