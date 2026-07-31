@@ -188,3 +188,5 @@
 - [x] 9.7 合规与安全：`AUTH_TOKEN` 弱口令拒绝启动 / 写端点令牌桶限流 / 审计日志中间件 / `purge_expired_data` 启动时+每 24h 清理 / 设计文档新增「合规与边界」小节 / `docs/合规与隐私.md`（条款采纳 + PIPL 措施 + 场景边界 + 隐私告知模板）
 - [x] 9.8 MCP 服务：`src/wechat_clawbot/mcp/` 封装 6 个工具（health / list_accounts / notify_user / get_session / start_wechat_login / check_login_status），`python -m wechat_clawbot.mcp` 启动 stdio 模式，配置文件：`CLAWBOT_BASE_URL` + `CLAWBOT_AUTH_TOKEN`
 - [x] 9.9 Coze（扣子）智能体接入：`src/wechat_clawbot/ai/coze.py` 实现 v3/chat 非流式（POST → retrieve 轮询 → message list），`AIChat` 后端自动切换（PAT+bot_id 同时设置即启用 Coze），`docs/coze-integration.md` 一步步操作指南 + curl 自验脚本，单元测试 6 个覆盖全路径
+- [x] 9.10 解耦与分发：`ai/chat.py` 改为**运行时懒加载** Coze（核心不依赖 coze，移除 coze.py 也不影响运行）；Coze 回复只取 `type=answer`，新增 `test_coze_provider_excludes_follow_up` 单测锁定「不带推荐问题」；新增 **npm MCP 包 `mcp-npm/`**（ESM，依赖 `@modelcontextprotocol/sdk`，6 工具调用 HTTP API，**不含 Coze / 不含任何令牌**）；已推送到 GitHub `CodingHeader/coze-clawbot`；npm publish 因本环境未登录 npm 暂未发布（包已构建并通过语法/SDK 校验，用户执行 `npm login && cd mcp-npm && npm publish` 即可）
+- [x] 9.11 真机联通验证：用真实 PAT + `bot_id=7668254674504007743`（招生顾问，已发布到 API 渠道）跑通 `v3/chat` 全链路，「怎么报名」真实回复 = "同学，先问一下，你打算报自考、成考还是国开呀？"

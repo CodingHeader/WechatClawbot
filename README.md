@@ -138,3 +138,26 @@ wechat-clawbot/
 - 只对接官方 iLink HTTP API，不逆向微信协议。
 - 不做账号自动注册、批量养号、群发营销。
 - 媒体消息（图片/语音/文件）留待 MVP 之后扩展。
+
+## 架构解耦：wechat-clawbot 与 Coze 是两个部分
+
+- **wechat-clawbot（核心）**：负责微信接入、多账号、会话、通知、HTTP API / MCP 传输层。AI 后端默认走 litellm（OpenAI 兼容）。
+- **Coze（可选 AI 插件）**：`src/wechat_clawbot/ai/coze.py` 是一个**可插拔**的 AI 后端。仅在 `.env` 同时设置 `COZE_PAT` + `COZE_BOT_ID` 时自动启用；核心代码在运行时**懒加载** coze，移除该文件也不影响核心运行。
+- 这种解耦保证：核心包、MCP 包、Docker 镜像都不含 Coze 逻辑或 Coze 令牌；Coze 仅作为后端配置项存在。
+- Coze 回复**只取 `type=answer`**，不会把 Coze 返回的 `follow_up` 推荐问题当作回复发出（有单测锁定）。
+
+详见 `docs/coze-integration.md`。
+
+## MCP 服务（npm，纯传输层，不含 Coze）
+
+`wechat-clawbot` 同时提供一个 **MCP 服务**，让 Claude / Cursor 等客户端通过 stdio 控制本服务（扫码登录、查状态、发通知、看会话）。它只调用本服务的 HTTP API，**不内置任何 AI、不引用 Coze、不携带任何密钥**。
+
+```bash
+cd mcp-npm && npm install
+# 在 MCP 客户端配置：
+#   command: npx wechat-clawbot-mcp
+#   env.CLAWBOT_BASE_URL=http://127.0.0.1:8088
+#   env.CLAWBOT_AUTH_TOKEN=<后端 AUTH_TOKEN，不是 Coze PAT>
+```
+
+详见 `mcp-npm/README.md`。
