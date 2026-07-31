@@ -52,6 +52,94 @@ _PUBLIC_PATH = re.compile(r"^/accounts/login/[^/]+/(qrcode\.png|status)$")
 """无需认证的登录辅助接口：二维码图片与登录状态查询。"""
 
 
+def _index_page_html(token: str) -> str:
+    """渲染根路径的 HTML 索引页：API 列表、扫码按钮、本地 token 提示。"""
+
+    return f"""<!doctype html>
+<html lang=zh><head>
+<meta charset=utf-8>
+<title>wechat-clawbot</title>
+<style>
+  body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 780px; margin: 32px auto; padding: 0 16px; color: #1f2328; }}
+  h1 {{ font-size: 22px; }} h2 {{ font-size: 16px; margin-top: 24px; }}
+  code, pre {{ background: #f6f8fa; border-radius: 6px; padding: 2px 6px; font-size: 13px; }}
+  pre {{ padding: 10px 12px; overflow: auto; }}
+  .row {{ display: flex; gap: 8px; margin: 12px 0; }}
+  a.btn, button {{ background: #1f883d; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; text-decoration: none; font-size: 14px; cursor: pointer; }}
+  a.btn.alt {{ background: #0969da; }} a.btn:hover, button:hover {{ opacity: .88; }}
+  table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
+  td, th {{ border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }}
+  th {{ background: #f6f8fa; }}
+  .muted {{ color: #6e7781; font-size: 12px; }}
+  .qrwrap {{ margin-top: 12px; padding: 12px; border: 1px dashed #d0d7de; border-radius: 8px; display: inline-block; }}
+</style></head><body>
+<h1>wechat-clawbot 控制台</h1>
+<p class=muted>本地服务，端口 8088。已绑定 0 个微信账号（多账号并发支持）。</p>
+
+<h2>1. 发起扫码登录（推荐）</h2>
+<div class=row>
+  <button onclick="startLogin()">▶ 发起新登录</button>
+</div>
+<div id=login-result></div>
+
+<h2>2. 受保护 API（需 Bearer Token）</h2>
+<table>
+  <tr><th>方法</th><th>路径</th><th>说明</th></tr>
+  <tr><td>GET</td><td><code>/health</code></td><td>健康检查（公开）</td></tr>
+  <tr><td>POST</td><td><code>/accounts/login/start</code></td><td>发起一次扫码登录（自动刷新）</td></tr>
+  <tr><td>GET</td><td><code>/accounts/login/{{id}}/status</code></td><td>查询登录状态（公开）</td></tr>
+  <tr><td>GET</td><td><code>/accounts/login/{{id}}/qrcode.png</code></td><td>二维码图片（公开）</td></tr>
+  <tr><td>POST</td><td><code>/accounts/login/{{id}}/refresh</code></td><td>主动换一张新二维码</td></tr>
+  <tr><td>GET</td><td><code>/accounts</code></td><td>列出已绑定账号</td></tr>
+  <tr><td>DELETE</td><td><code>/accounts/{{id}}</code></td><td>解绑一个账号</td></tr>
+  <tr><td>POST</td><td><code>/notify</code></td><td>主动向微信用户发消息</td></tr>
+</table>
+
+<h2>3. 当前 Bearer Token（本地）</h2>
+<p class=muted>以下 token 仅在你自己本机显示。curl 调用时把 <code>Authorization: Bearer &lt;token&gt;</code> 加到 header。</p>
+<details><summary>显示 token</summary>
+  <pre>{token}</pre>
+</details>
+
+<h2>4. 快速 curl 示例</h2>
+<pre>curl -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:8088/accounts
+curl -X POST -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:8088/accounts/login/start</pre>
+
+<script>
+async function startLogin() {{
+  const out = document.getElementById('login-result');
+  out.innerHTML = '<p class=muted>正在获取二维码…</p>';
+  try {{
+    const r = await fetch('/accounts/login/start', {{ method: 'POST' }});
+    if (r.status === 401) {{
+      out.innerHTML = '<p style="color:#cf222e">未授权：POST 端点需要 token。请到"快速 curl 示例"用 curl 调用。</p>';
+      return;
+    }}
+    const j = await r.json();
+    if (j.detail) {{
+      out.innerHTML = '<p style="color:#cf222e">失败：' + j.detail + '</p>';
+      return;
+    }}
+    out.innerHTML = `
+      <p>✅ login_id: <code>${{j.login_id}}</code> · 过期自动刷新：${{j.auto_refresh}}（上限 ${{j.max_refresh}} 次）</p>
+      <div class=qrwrap>
+        <img src="/accounts/login/${{j.login_id}}/qrcode.png" width=240 height=240 alt=qrcode>
+        <p class=muted>用微信扫一扫 → 点"登录/确认"</p>
+        <a class="btn alt" href="javascript:void(0)" onclick="pollStatus('${{j.login_id}}')">查询扫码状态</a>
+      </div>`;
+  }} catch (e) {{
+    out.innerHTML = '<p style="color:#cf222e">请求失败：' + e + '</p>';
+  }}
+}}
+async function pollStatus(lid) {{
+  const r = await fetch('/accounts/login/' + lid + '/status');
+  const j = await r.json();
+  alert('status: ' + j.status + (j.account_id ? '\\naccount_id: ' + j.account_id : '') + (j.refresh_count !== undefined ? '\\nrefresh_count: ' + j.refresh_count + '/' + j.max_refresh : ''));
+}}
+</script>
+</body></html>"""
+
+
 class NotifyRequest(BaseModel):
     """主动通知请求体。"""
 
@@ -96,7 +184,7 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
         """限流 → 认证 → 审计：放行 /health 与登录二维码，其余写端点限流并记录审计。"""
 
         path = request.url.path
-        if path == "/health" or _PUBLIC_PATH.match(path):
+        if path in ("/", "/health") or _PUBLIC_PATH.match(path):
             return await call_next(request)
 
         client_ip = request.client.host if request.client else "unknown"
@@ -116,6 +204,16 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
     @app.get("/health")
     async def health() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", response_class=Response)
+    async def index() -> Response:
+        """本地控制台首页：列出 API、显示 token、提供「发起扫码」按钮。
+
+        仅 localhost 暴露：内网其他机器仍然需要 token 才能调用受保护端点。
+        """
+
+        html = _index_page_html(settings.auth_token)
+        return Response(content=html, media_type="text/html; charset=utf-8")
 
     @app.post("/accounts/login/start")
     async def login_start() -> dict[str, Any]:

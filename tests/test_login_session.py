@@ -99,3 +99,41 @@ def test_qr_expired_auto_refresh_then_confirm() -> None:
             final = client.get(f"/accounts/login/{login_id}/status").json()
             assert final["refresh_count"] >= 3
             clawbot.activate_account.assert_awaited()
+
+
+def test_root_index_page_is_public(tmp_path) -> None:
+    """GET / 应无需 token，直接返回 HTML 控制台首页。"""
+
+    settings = _make_settings(DB_PATH=str(tmp_path / "test.db"))
+    clawbot = MagicMock()
+    clawbot.activate_account = AsyncMock()
+    app = create_app(clawbot, settings)
+    with TestClient(app) as client:
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        body = r.text
+        assert "wechat-clawbot 控制台" in body
+        # token 出现在页面（被 details 折叠，需要时点开）
+        assert settings.auth_token in body
+        # 公开端点不需要鉴权
+        assert "/health" in body
+        # 受保护端点也被列出
+        assert "/accounts/login/start" in body
+        assert "/accounts" in body
+
+
+def test_root_index_middleware_does_not_require_auth(tmp_path) -> None:
+    """验证中间件在 path == '/' 时放行，不返回 401。"""
+
+    settings = _make_settings(DB_PATH=str(tmp_path / "test.db"))
+    clawbot = MagicMock()
+    app = create_app(clawbot, settings)
+    with TestClient(app) as client:
+        # 故意不带 Authorization，期望拿到 HTML 而非 401
+        r = client.get("/")
+        assert r.status_code == 200
+        assert "text/html" in r.headers["content-type"]
+        # 且 body 不是 JSON 的 "unauthorized" 错误体
+        assert "unauthorized" not in r.text.lower()
+        assert "<html" in r.text.lower()
