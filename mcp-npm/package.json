@@ -1,0 +1,32 @@
+{
+  "name": "wechat-clawbot-mcp",
+  "version": "0.1.0",
+  "description": "MCP server for wechat-clawbot (multi-user WeChat ClawBot). Talks to the running wechat-clawbot HTTP API over stdio. No Coze / no AI tokens bundled.",
+  "type": "module",
+  "bin": {
+    "wechat-clawbot-mcp": "index.js"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.6.0",
+    "zod": "^3.23.0"
+  },
+  "keywords": [
+    "mcp",
+    "wechat",
+    "clawbot",
+    "wechat-clawbot",
+    "ai-agent"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/CodingHeader/coze-clawbot.git"
+  }
+}

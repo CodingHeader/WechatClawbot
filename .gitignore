@@ -1,0 +1,15 @@
+# 本目录为运行时数据目录
+# 不要提交任何账号凭证、数据库或二维码缓存文件
+/data/
+*.db
+*.sqlite3
+.env
+__pycache__/
+*.pyc
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Node / npm（mcp-npm 子包依赖，不入库）
+node_modules/
+
