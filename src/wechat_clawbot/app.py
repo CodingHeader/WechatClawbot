@@ -128,10 +128,43 @@ class ClawBotApp:
         self._clients[account.id] = client
         self._tasks[account.id] = asyncio.create_task(self._poll_loop(account, client))
 
+    async def _supersede_same_user_accounts(self, new_account: Account) -> list[str]:
+        """同一微信用户（ilink_user_id）重复扫码时，作废旧账号并停止其轮询。
+
+        iLink 平台语义：每次扫码生成全新 bot 实例，用户消息只路由到最新授权的
+        bot；旧 bot token 虽仍有效但已收不到消息，继续轮询纯属浪费。因此在激活
+        新账号前，把同用户的其它 active 账号标记为 expired 并停止其循环。
+
+        返回被作废的账号 id 列表。
+        """
+
+        if not new_account.ilink_user_id:
+            return []
+        superseded: list[str] = []
+        for acc in db.list_accounts(self.settings.db_path, status=AccountStatus.ACTIVE):
+            if acc.id == new_account.id:
+                continue
+            if not acc.ilink_user_id or acc.ilink_user_id != new_account.ilink_user_id:
+                continue
+            task = self._tasks.pop(acc.id, None)
+            if task is not None:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+            client = self._clients.pop(acc.id, None)
+            if client is not None:
+                await client.aclose()
+            db.update_account_status(self.settings.db_path, acc.id, AccountStatus.EXPIRED)
+            superseded.append(acc.id)
+            logger.info(
+                "同一微信用户重复扫码，旧账号作废: %s → 新账号 %s", acc.id, new_account.id
+            )
+        return superseded
+
     async def add_account(self) -> Account:
         """终端扫码登录新账号，凭证入库并启动消息循环。"""
 
         account = await login(self.settings)
+        await self._supersede_same_user_accounts(account)
         db.save_account(self.settings.db_path, account)
         self.start_account_loop(account)
         return account
@@ -139,6 +172,7 @@ class ClawBotApp:
     async def activate_account(self, account: Account) -> None:
         """保存凭证并启动循环（供 HTTP 扫码登录流程调用）。"""
 
+        await self._supersede_same_user_accounts(account)
         db.save_account(self.settings.db_path, account)
         self.start_account_loop(account)
 

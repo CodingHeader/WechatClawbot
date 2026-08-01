@@ -152,12 +152,26 @@ async function loadAccounts() {{
   try {{
     const r = await fetch('/accounts', {{ headers: HDRS }});
     const arr = await r.json();
-    document.getElementById('acct-count').textContent = arr.length;
+    document.getElementById('acct-count').textContent = arr.filter(a => a.status === 'active').length;
     if (!arr.length) {{ el.innerHTML = '<p class=muted>暂无绑定账号</p>'; return; }}
-    el.innerHTML = '<table><tr><th>账号 ID</th><th>状态</th><th>最后活跃</th></tr>' +
-      arr.map(a => `<tr><td><code>${{a.id}}</code></td><td><span class=badge>${{a.status}}</span></td><td class=muted>${{a.updated_at}}</td></tr>`).join('') +
-      '</table>';
+    el.innerHTML = '<table><tr><th>账号 ID</th><th>状态</th><th>最后活跃</th><th>操作</th></tr>' +
+      arr.map(a => {{
+        const badgeStyle = a.status === 'active'
+          ? 'background:#ddf4ff;color:#0969da'
+          : 'background:#eaeef2;color:#6e7781';
+        return `<tr><td><code>${{a.id}}</code></td>` +
+          `<td><span class=badge style="${{badgeStyle}}">${{a.status}}</span></td>` +
+          `<td class=muted>${{a.updated_at}}</td>` +
+          `<td><button class="sm" style="background:#cf222e" onclick="delAccount('${{a.id}}')">🗑 解绑</button></td></tr>`;
+      }}).join('') + '</table>';
   }} catch (e) {{ el.innerHTML = '<p class=muted>加载失败</p>'; }}
+}}
+
+async function delAccount(aid) {{
+  if (!confirm('确定解绑账号 ' + aid + '？将停止其消息循环并删除凭证。')) return;
+  const r = await fetch('/accounts/' + encodeURIComponent(aid), {{ method: 'DELETE', headers: HDRS }});
+  const j = await r.json();
+  if (j.ok) {{ loadAccounts(); loadUsers(); }} else {{ alert('解绑失败: ' + (j.detail || '未知错误')); }}
 }}
 
 async function loadUsers() {{
