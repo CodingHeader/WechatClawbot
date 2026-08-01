@@ -56,12 +56,34 @@ class MessageItemType(int, Enum):
 
 
 class TextItem(BaseModel):
-    text: str
+    text: str = ""
+
+
+class MediaItem(BaseModel):
+    """通用媒体项（图片/语音/视频/文件共用，字段按需出现）。"""
+
+    model_config = {"extra": "allow"}
+
+    media_id: str = ""
+    url: str = ""
+    thumb_url: str = ""
+    file_name: str = ""
+    file_size: int = 0
+    duration: int = 0
+    format: str = ""
 
 
 class MessageItem(BaseModel):
-    type: MessageItemType
+    """iLink 消息条目，支持文本与多媒体。"""
+
+    model_config = {"extra": "allow"}
+
+    type: MessageItemType = MessageItemType.TEXT
     text_item: TextItem | None = None
+    image_item: MediaItem | None = None
+    voice_item: MediaItem | None = None
+    file_item: MediaItem | None = None
+    video_item: MediaItem | None = None
 
 
 class WeChatMessage(BaseModel):
@@ -87,8 +109,15 @@ class ChatRole(str, Enum):
 
 
 class ChatTurn(BaseModel):
+    """单轮对话，支持文本与多媒体。"""
+
     role: ChatRole
-    content: str
+    content: str = ""
+    content_type: str = "text"
+    """text / image / voice / file / video"""
+
+    media_url: str = ""
+    """媒体可访问 URL（如有）"""
 
 
 class SessionRecord(BaseModel):

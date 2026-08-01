@@ -24,11 +24,32 @@ class SessionRouter:
         self.ai_chat = ai_chat
         self._context_tokens: OrderedDict[str, str] = OrderedDict()
 
-    def _extract_text(self, msg: WeChatMessage) -> str:
+    @staticmethod
+    def _extract_content(msg: WeChatMessage) -> tuple[str, str, str]:
+        """从消息中提取内容，返回 (text, content_type, media_url)。
+
+        content_type: text / image / voice / file / video
+        text: 用于 AI 处理的纯文本（媒体时为描述性占位符）
+        media_url: 媒体可访问 URL（如有）
+        """
+
         for item in msg.item_list:
             if item.type == MessageItemType.TEXT and item.text_item:
-                return item.text_item.text.strip()
-        return ""
+                return item.text_item.text.strip(), "text", ""
+            if item.type == MessageItemType.IMAGE and item.image_item:
+                url = item.image_item.url or item.image_item.thumb_url or ""
+                return "[图片]", "image", url
+            if item.type == MessageItemType.VOICE and item.voice_item:
+                url = item.voice_item.url or ""
+                return "[语音]", "voice", url
+            if item.type == MessageItemType.FILE and item.file_item:
+                name = item.file_item.file_name or "未知文件"
+                url = item.file_item.url or ""
+                return f"[文件: {name}]", "file", url
+            if item.type == MessageItemType.VIDEO and item.video_item:
+                url = item.video_item.url or item.video_item.thumb_url or ""
+                return "[视频]", "video", url
+        return "", "text", ""
 
     @staticmethod
     def _token_key(account_id: str, wechat_user_id: str) -> str:
@@ -62,7 +83,17 @@ class SessionRouter:
         if msg.message_id:
             db.mark_message_processed(self.settings.db_path, account_id, msg)
 
-        text = self._extract_text(msg)
+        text, content_type, media_url = self._extract_content(msg)
+
+        # 媒体消息：存入历史但不送 AI（AI 目前只处理文本）
+        if content_type != "text":
+            self.session_store.append_turn(
+                account_id, msg.from_user_id, ChatRole.USER,
+                text, content_type=content_type, media_url=media_url,
+            )
+            type_label = {"image": "图片", "voice": "语音", "file": "文件", "video": "视频"}.get(content_type, content_type)
+            return f"已收到你的{type_label}，暂时无法处理多媒体内容，请发文字消息。"
+
         if not text:
             return ""
 

@@ -215,7 +215,15 @@ def get_session(db_path: Path, account_id: str, wechat_user_id: str) -> SessionR
             (account_id, wechat_user_id),
         ).fetchone()
         if row:
-            history = [ChatTurn(role=ChatRole(t["role"]), content=t["content"]) for t in json.loads(row["history_json"])]
+            history = [
+                ChatTurn(
+                    role=ChatRole(t["role"]),
+                    content=t.get("content", ""),
+                    content_type=t.get("content_type", "text"),
+                    media_url=t.get("media_url", ""),
+                )
+                for t in json.loads(row["history_json"])
+            ]
             return SessionRecord(
                 account_id=account_id,
                 wechat_user_id=wechat_user_id,
@@ -232,7 +240,10 @@ def get_session(db_path: Path, account_id: str, wechat_user_id: str) -> SessionR
 def save_session(db_path: Path, session: SessionRecord) -> None:
     conn = _connect(db_path)
     try:
-        history_json = json.dumps([{"role": t.role.value, "content": t.content} for t in session.history])
+        history_json = json.dumps([
+            {"role": t.role.value, "content": t.content, "content_type": t.content_type, "media_url": t.media_url}
+            for t in session.history
+        ])
         conn.execute(
             """
             INSERT INTO sessions (account_id, wechat_user_id, history_json, summary, runtime_config_json, updated_at)

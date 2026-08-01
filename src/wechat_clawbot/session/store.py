@@ -29,11 +29,16 @@ class SessionStore:
 
         db.save_session(self.db_path, session)
 
-    def append_turn(self, account_id: str, wechat_user_id: str, role: ChatRole, content: str) -> SessionRecord:
+    def append_turn(
+        self, account_id: str, wechat_user_id: str, role: ChatRole,
+        content: str, content_type: str = "text", media_url: str = "",
+    ) -> SessionRecord:
         """追加一轮对话并返回更新后的会话。"""
 
         session = self.get_session(account_id, wechat_user_id)
-        session.history.append(ChatTurn(role=role, content=content))
+        session.history.append(ChatTurn(
+            role=role, content=content, content_type=content_type, media_url=media_url,
+        ))
         self.save_session(session)
         return session
 

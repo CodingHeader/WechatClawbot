@@ -18,7 +18,7 @@ from pydantic import BaseModel
 from .. import db
 from ..app import ClawBotApp
 from ..config import Settings
-from ..models import Account, AccountStatus
+from ..models import Account, AccountStatus, ChatRole
 from ..wechat.auth import fetch_qrcode, poll_qrcode_status, render_qr_png
 
 logger = logging.getLogger(__name__)
@@ -75,13 +75,17 @@ def _index_page_html(token: str) -> str:
   th {{ background: #f6f8fa; }}
   .muted {{ color: #6e7781; font-size: 12px; }}
   .qrwrap {{ margin-top: 12px; padding: 12px; border: 1px dashed #d0d7de; border-radius: 8px; display: inline-block; }}
-  .chat-box {{ max-height: 300px; overflow-y: auto; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 8px 0; background: #f6f8fa; }}
-  .chat-msg {{ margin: 6px 0; padding: 6px 10px; border-radius: 8px; max-width: 80%; }}
+  .chat-box {{ max-height: 320px; overflow-y: auto; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 8px 0; background: #f6f8fa; }}
+  .chat-msg {{ margin: 6px 0; padding: 8px 12px; border-radius: 8px; max-width: 80%; word-break: break-word; }}
   .chat-msg.user {{ background: #ddf4ff; margin-left: auto; text-align: right; }}
   .chat-msg.bot {{ background: #fff; border: 1px solid #d0d7de; }}
   .chat-msg .role {{ font-size: 11px; color: #6e7781; margin-bottom: 2px; }}
+  .chat-msg img.media {{ max-width: 200px; border-radius: 6px; margin: 4px 0; cursor: pointer; }}
+  .chat-msg audio.media {{ max-width: 240px; margin: 4px 0; }}
+  .chat-msg video.media {{ max-width: 240px; border-radius: 6px; margin: 4px 0; }}
+  .chat-msg .file-attach {{ display: inline-flex; align-items: center; gap: 4px; padding: 4px 10px; background: #f6f8fa; border: 1px solid #d0d7de; border-radius: 6px; font-size: 12px; text-decoration: none; color: #0969da; }}
   .send-form {{ display: flex; gap: 8px; margin-top: 8px; }}
-  .send-form input {{ flex: 1; padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px; }}
+  .send-form input {{ flex: 1; padding: 8px 12px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px; }}
   .send-form button {{ padding: 6px 14px; }}
   .user-card {{ border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 8px 0; }}
   .user-head {{ display: flex; justify-content: space-between; align-items: center; }}
@@ -190,25 +194,46 @@ async function loadUsers() {{
             <p class=muted>账号: ${{u.account_id}} · 最后活跃: ${{u.updated_at}}</p>
           </div>
           <div>
-            <button class=sm onclick="toggleHistory(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">💬 聊天</button>
-            <button class="sm alt" onclick="toggleSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">✉️ 发消息</button>
+            <button class=sm onclick="toggleChat(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">💬 聊天</button>
           </div>
         </div>
         <div id="chat-${{i}}" class=hidden></div>
-        <div id="send-${{i}}" class=hidden>
-          <div class=send-form>
-            <input id="msg-${{i}}" placeholder="输入消息内容…" onkeydown="if(event.key==='Enter')doSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">
-            <button onclick="doSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">发送</button>
-          </div>
-        </div>
       </div>`).join('');
   }} catch (e) {{ el.innerHTML = '<p style="color:#cf222e">加载失败：' + e + '</p>'; }}
 }}
 
-async function toggleHistory(idx, aid, uid) {{
+function renderMsg(t) {{
+  const cls = t.role === 'user' ? 'user' : 'bot';
+  const label = t.role === 'user' ? '用户' : '机器人';
+  const ct = t.content_type || 'text';
+  let body = '';
+  if (ct === 'text') {{
+    body = t.content || '';
+  }} else if (ct === 'image') {{
+    body = (t.content || '[图片]') + (t.media_url ? `<br><img class=media src="${{t.media_url}}" onclick="window.open(this.src)" onerror="this.style.display='none'">` : '');
+  }} else if (ct === 'voice') {{
+    body = (t.content || '[语音]') + (t.media_url ? `<br><audio class=media controls src="${{t.media_url}}"></audio>` : '');
+  }} else if (ct === 'video') {{
+    body = (t.content || '[视频]') + (t.media_url ? `<br><video class=media controls src="${{t.media_url}}"></video>` : '');
+  }} else if (ct === 'file') {{
+    body = t.media_url
+      ? `<a class=file-attach href="${{t.media_url}}" target=_blank>📎 ${{t.content || '文件'}}</a>`
+      : (t.content || '[文件]');
+  }} else {{
+    body = t.content || '';
+  }}
+  return `<div class="chat-msg ${{cls}}"><div class=role>${{label}}</div>${{body}}</div>`;
+}}
+
+async function toggleChat(idx, aid, uid) {{
   const box = document.getElementById('chat-' + idx);
   if (!box.classList.contains('hidden')) {{ box.classList.add('hidden'); return; }}
   box.classList.remove('hidden');
+  await loadChat(idx, aid, uid);
+}}
+
+async function loadChat(idx, aid, uid) {{
+  const box = document.getElementById('chat-' + idx);
   box.innerHTML = '<p class=muted>加载聊天历史…</p>';
   try {{
     const r = await fetch('/sessions/' + encodeURIComponent(aid) + '/' + encodeURIComponent(uid), {{ headers: HDRS }});
@@ -217,22 +242,17 @@ async function toggleHistory(idx, aid, uid) {{
     let html = '<div class=chat-box>';
     if (j.summary) html += '<p class=muted>📋 摘要: ' + j.summary + '</p>';
     if (!j.history.length) html += '<p class=muted>暂无聊天记录</p>';
-    for (const t of j.history) {{
-      const cls = t.role === 'user' ? 'user' : 'bot';
-      const label = t.role === 'user' ? '用户' : '机器人';
-      html += `<div class="chat-msg ${{cls}}"><div class=role>${{label}}</div>${{t.content}}</div>`;
-    }}
+    for (const t of j.history) html += renderMsg(t);
     html += '</div>';
+    html += `<div class=send-form>
+      <input id="msg-${{idx}}" placeholder="输入消息，Enter 发送…" onkeydown="if(event.key==='Enter')doSend(${{idx}},'${{aid}}','${{uid}}')">
+      <button onclick="doSend(${{idx}},'${{aid}}','${{uid}}')">发送</button>
+    </div>`;
     html += `<p class=muted>共 ${{j.history.length}} 条 · 更新于 ${{j.updated_at}}</p>`;
     box.innerHTML = html;
-    box.querySelector('.chat-box').scrollTop = 99999;
+    const cb = box.querySelector('.chat-box');
+    if (cb) cb.scrollTop = cb.scrollHeight;
   }} catch (e) {{ box.innerHTML = '<p style="color:#cf222e">加载失败</p>'; }}
-}}
-
-function toggleSend(idx, aid, uid) {{
-  const box = document.getElementById('send-' + idx);
-  box.classList.toggle('hidden');
-  if (!box.classList.contains('hidden')) document.getElementById('msg-' + idx).focus();
 }}
 
 async function doSend(idx, aid, uid) {{
@@ -247,8 +267,10 @@ async function doSend(idx, aid, uid) {{
     }});
     const j = await r.json();
     if (j.ok) {{
-      input.placeholder = '✅ 已发送';
-      setTimeout(() => input.placeholder = '输入消息内容…', 2000);
+      // 发送成功后立刻刷新聊天记录
+      await loadChat(idx, aid, uid);
+      const newInput = document.getElementById('msg-' + idx);
+      if (newInput) newInput.focus();
     }} else {{
       alert('发送失败');
     }}
@@ -524,7 +546,15 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
             "account_id": session.account_id,
             "wechat_user_id": session.wechat_user_id,
             "summary": session.summary,
-            "history": [{"role": t.role.value, "content": t.content} for t in session.history],
+            "history": [
+                {
+                    "role": t.role.value,
+                    "content": t.content,
+                    "content_type": t.content_type,
+                    "media_url": t.media_url,
+                }
+                for t in session.history
+            ],
             "updated_at": session.updated_at.isoformat(),
         }
 
@@ -538,9 +568,13 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
 
     @app.post("/users/{account_id}/{wechat_user_id}/send")
     async def send_to_user(account_id: str, wechat_user_id: str, req: NotifyRequest) -> dict[str, Any]:
-        """向指定用户主动发送消息（控制台用）。"""
+        """向指定用户主动发送消息，并写回会话历史。"""
 
         ok = await clawbot.notifier.notify(account_id, wechat_user_id, req.text)
+        if ok:
+            clawbot.session_store.append_turn(
+                account_id, wechat_user_id, ChatRole.ASSISTANT, req.text,
+            )
         return {"ok": ok}
 
     return app
