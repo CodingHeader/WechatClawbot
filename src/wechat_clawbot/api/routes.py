@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 import time
@@ -14,6 +15,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
+from .. import db
 from ..app import ClawBotApp
 from ..config import Settings
 from ..models import Account, AccountStatus
@@ -53,89 +55,195 @@ _PUBLIC_PATH = re.compile(r"^/accounts/login/[^/]+/(qrcode\.png|status)$")
 
 
 def _index_page_html(token: str) -> str:
-    """渲染根路径的 HTML 索引页：API 列表、扫码按钮、本地 token 提示。"""
+    """渲染根路径的 HTML 索引页：扫码登录、用户管理、聊天历史、主动发消息。"""
 
     return f"""<!doctype html>
 <html lang=zh><head>
 <meta charset=utf-8>
 <title>wechat-clawbot</title>
 <style>
-  body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 780px; margin: 32px auto; padding: 0 16px; color: #1f2328; }}
+  body {{ font-family: -apple-system, Segoe UI, sans-serif; max-width: 860px; margin: 32px auto; padding: 0 16px; color: #1f2328; }}
   h1 {{ font-size: 22px; }} h2 {{ font-size: 16px; margin-top: 24px; }}
   code, pre {{ background: #f6f8fa; border-radius: 6px; padding: 2px 6px; font-size: 13px; }}
   pre {{ padding: 10px 12px; overflow: auto; }}
   .row {{ display: flex; gap: 8px; margin: 12px 0; }}
   a.btn, button {{ background: #1f883d; color: #fff; border: 0; border-radius: 6px; padding: 8px 14px; text-decoration: none; font-size: 14px; cursor: pointer; }}
   a.btn.alt {{ background: #0969da; }} a.btn:hover, button:hover {{ opacity: .88; }}
+  a.btn.sm, button.sm {{ padding: 4px 10px; font-size: 12px; }}
   table {{ border-collapse: collapse; width: 100%; font-size: 13px; }}
   td, th {{ border: 1px solid #d0d7de; padding: 6px 10px; text-align: left; }}
   th {{ background: #f6f8fa; }}
   .muted {{ color: #6e7781; font-size: 12px; }}
   .qrwrap {{ margin-top: 12px; padding: 12px; border: 1px dashed #d0d7de; border-radius: 8px; display: inline-block; }}
+  .chat-box {{ max-height: 300px; overflow-y: auto; border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 8px 0; background: #f6f8fa; }}
+  .chat-msg {{ margin: 6px 0; padding: 6px 10px; border-radius: 8px; max-width: 80%; }}
+  .chat-msg.user {{ background: #ddf4ff; margin-left: auto; text-align: right; }}
+  .chat-msg.bot {{ background: #fff; border: 1px solid #d0d7de; }}
+  .chat-msg .role {{ font-size: 11px; color: #6e7781; margin-bottom: 2px; }}
+  .send-form {{ display: flex; gap: 8px; margin-top: 8px; }}
+  .send-form input {{ flex: 1; padding: 6px 10px; border: 1px solid #d0d7de; border-radius: 6px; font-size: 13px; }}
+  .send-form button {{ padding: 6px 14px; }}
+  .user-card {{ border: 1px solid #d0d7de; border-radius: 8px; padding: 12px; margin: 8px 0; }}
+  .user-head {{ display: flex; justify-content: space-between; align-items: center; }}
+  .badge {{ display: inline-block; padding: 2px 8px; border-radius: 10px; font-size: 11px; background: #ddf4ff; color: #0969da; }}
+  .hidden {{ display: none; }}
 </style></head><body>
 <h1>wechat-clawbot 控制台</h1>
-<p class=muted>本地服务，端口 8088。已绑定 0 个微信账号（多账号并发支持）。</p>
+<p class=muted>本地服务，端口 8088。已绑定 <span id=acct-count>…</span> 个微信账号。</p>
 
-<h2>1. 发起扫码登录（推荐）</h2>
+<h2>1. 发起扫码登录</h2>
 <div class=row>
   <button onclick="startLogin()">▶ 发起新登录</button>
+  <button class=alt onclick="loadAccounts()" style="background:#6e7781">刷新账号列表</button>
 </div>
 <div id=login-result></div>
+<div id=accounts-list></div>
 
-<h2>2. 受保护 API（需 Bearer Token）</h2>
+<h2>2. 微信用户管理</h2>
+<div class=row>
+  <button onclick="loadUsers()">🔄 刷新用户列表</button>
+</div>
+<div id=users-list><p class=muted>点击「刷新用户列表」加载</p></div>
+
+<h2>3. API 一览</h2>
+<details><summary>展开</summary>
 <table>
   <tr><th>方法</th><th>路径</th><th>说明</th></tr>
   <tr><td>GET</td><td><code>/health</code></td><td>健康检查（公开）</td></tr>
-  <tr><td>POST</td><td><code>/accounts/login/start</code></td><td>发起一次扫码登录（自动刷新）</td></tr>
-  <tr><td>GET</td><td><code>/accounts/login/{{id}}/status</code></td><td>查询登录状态（公开）</td></tr>
+  <tr><td>POST</td><td><code>/accounts/login/start</code></td><td>发起扫码登录（自动刷新）</td></tr>
+  <tr><td>GET</td><td><code>/accounts/login/{{id}}/status</code></td><td>登录状态（公开）</td></tr>
   <tr><td>GET</td><td><code>/accounts/login/{{id}}/qrcode.png</code></td><td>二维码图片（公开）</td></tr>
-  <tr><td>POST</td><td><code>/accounts/login/{{id}}/refresh</code></td><td>主动换一张新二维码</td></tr>
+  <tr><td>POST</td><td><code>/accounts/login/{{id}}/refresh</code></td><td>手动刷新二维码</td></tr>
   <tr><td>GET</td><td><code>/accounts</code></td><td>列出已绑定账号</td></tr>
-  <tr><td>DELETE</td><td><code>/accounts/{{id}}</code></td><td>解绑一个账号</td></tr>
-  <tr><td>POST</td><td><code>/notify</code></td><td>主动向微信用户发消息</td></tr>
+  <tr><td>DELETE</td><td><code>/accounts/{{id}}</code></td><td>解绑账号</td></tr>
+  <tr><td>GET</td><td><code>/users</code></td><td>列出所有微信用户</td></tr>
+  <tr><td>GET</td><td><code>/sessions/{{aid}}/{{uid}}</code></td><td>查看聊天历史</td></tr>
+  <tr><td>POST</td><td><code>/users/{{aid}}/{{uid}}/send</code></td><td>向指定用户发消息</td></tr>
+  <tr><td>POST</td><td><code>/notify</code></td><td>主动通知（需 JSON body）</td></tr>
 </table>
+</details>
 
-<h2>3. 当前 Bearer Token（本地）</h2>
-<p class=muted>以下 token 仅在你自己本机显示。curl 调用时把 <code>Authorization: Bearer &lt;token&gt;</code> 加到 header。</p>
-<details><summary>显示 token</summary>
+<details><summary>当前 Bearer Token（点击展开）</summary>
   <pre>{token}</pre>
 </details>
 
-<h2>4. 快速 curl 示例</h2>
-<pre>curl -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:8088/accounts
-curl -X POST -H "Authorization: Bearer &lt;token&gt;" http://127.0.0.1:8088/accounts/login/start</pre>
-
 <script>
+const AUTH_TOKEN = {json.dumps(token)};
+const HDRS = {{ 'Authorization': 'Bearer ' + AUTH_TOKEN, 'Content-Type': 'application/json' }};
+
 async function startLogin() {{
   const out = document.getElementById('login-result');
   out.innerHTML = '<p class=muted>正在获取二维码…</p>';
   try {{
-    const r = await fetch('/accounts/login/start', {{ method: 'POST' }});
-    if (r.status === 401) {{
-      out.innerHTML = '<p style="color:#cf222e">未授权：POST 端点需要 token。请到"快速 curl 示例"用 curl 调用。</p>';
-      return;
-    }}
+    const r = await fetch('/accounts/login/start', {{ method: 'POST', headers: HDRS }});
     const j = await r.json();
-    if (j.detail) {{
-      out.innerHTML = '<p style="color:#cf222e">失败：' + j.detail + '</p>';
-      return;
-    }}
+    if (j.detail) {{ out.innerHTML = '<p style="color:#cf222e">失败：' + j.detail + '</p>'; return; }}
     out.innerHTML = `
-      <p>✅ login_id: <code>${{j.login_id}}</code> · 过期自动刷新：${{j.auto_refresh}}（上限 ${{j.max_refresh}} 次）</p>
+      <p>✅ login_id: <code>${{j.login_id}}</code> · 自动刷新上限 ${{j.max_refresh}} 次</p>
       <div class=qrwrap>
         <img src="/accounts/login/${{j.login_id}}/qrcode.png" width=240 height=240 alt=qrcode>
         <p class=muted>用微信扫一扫 → 点"登录/确认"</p>
-        <a class="btn alt" href="javascript:void(0)" onclick="pollStatus('${{j.login_id}}')">查询扫码状态</a>
       </div>`;
-  }} catch (e) {{
-    out.innerHTML = '<p style="color:#cf222e">请求失败：' + e + '</p>';
-  }}
+  }} catch (e) {{ out.innerHTML = '<p style="color:#cf222e">请求失败：' + e + '</p>'; }}
 }}
-async function pollStatus(lid) {{
-  const r = await fetch('/accounts/login/' + lid + '/status');
-  const j = await r.json();
-  alert('status: ' + j.status + (j.account_id ? '\\naccount_id: ' + j.account_id : '') + (j.refresh_count !== undefined ? '\\nrefresh_count: ' + j.refresh_count + '/' + j.max_refresh : ''));
+
+async function loadAccounts() {{
+  const el = document.getElementById('accounts-list');
+  try {{
+    const r = await fetch('/accounts', {{ headers: HDRS }});
+    const arr = await r.json();
+    document.getElementById('acct-count').textContent = arr.length;
+    if (!arr.length) {{ el.innerHTML = '<p class=muted>暂无绑定账号</p>'; return; }}
+    el.innerHTML = '<table><tr><th>账号 ID</th><th>状态</th><th>最后活跃</th></tr>' +
+      arr.map(a => `<tr><td><code>${{a.id}}</code></td><td><span class=badge>${{a.status}}</span></td><td class=muted>${{a.updated_at}}</td></tr>`).join('') +
+      '</table>';
+  }} catch (e) {{ el.innerHTML = '<p class=muted>加载失败</p>'; }}
 }}
+
+async function loadUsers() {{
+  const el = document.getElementById('users-list');
+  el.innerHTML = '<p class=muted>加载中…</p>';
+  try {{
+    const r = await fetch('/users', {{ headers: HDRS }});
+    const arr = await r.json();
+    if (!arr.length) {{ el.innerHTML = '<p class=muted>暂无微信用户会话</p>'; return; }}
+    el.innerHTML = arr.map((u, i) => `
+      <div class=user-card>
+        <div class=user-head>
+          <div>
+            <strong>👤 ${{u.wechat_user_id}}</strong>
+            <span class=badge>${{u.message_count}} 条消息</span>
+            <p class=muted>账号: ${{u.account_id}} · 最后活跃: ${{u.updated_at}}</p>
+          </div>
+          <div>
+            <button class=sm onclick="toggleHistory(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">💬 聊天</button>
+            <button class="sm alt" onclick="toggleSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">✉️ 发消息</button>
+          </div>
+        </div>
+        <div id="chat-${{i}}" class=hidden></div>
+        <div id="send-${{i}}" class=hidden>
+          <div class=send-form>
+            <input id="msg-${{i}}" placeholder="输入消息内容…" onkeydown="if(event.key==='Enter')doSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">
+            <button onclick="doSend(${{i}}, '${{u.account_id}}', '${{u.wechat_user_id}}')">发送</button>
+          </div>
+        </div>
+      </div>`).join('');
+  }} catch (e) {{ el.innerHTML = '<p style="color:#cf222e">加载失败：' + e + '</p>'; }}
+}}
+
+async function toggleHistory(idx, aid, uid) {{
+  const box = document.getElementById('chat-' + idx);
+  if (!box.classList.contains('hidden')) {{ box.classList.add('hidden'); return; }}
+  box.classList.remove('hidden');
+  box.innerHTML = '<p class=muted>加载聊天历史…</p>';
+  try {{
+    const r = await fetch('/sessions/' + encodeURIComponent(aid) + '/' + encodeURIComponent(uid), {{ headers: HDRS }});
+    const j = await r.json();
+    if (j.detail) {{ box.innerHTML = '<p class=muted>' + j.detail + '</p>'; return; }}
+    let html = '<div class=chat-box>';
+    if (j.summary) html += '<p class=muted>📋 摘要: ' + j.summary + '</p>';
+    if (!j.history.length) html += '<p class=muted>暂无聊天记录</p>';
+    for (const t of j.history) {{
+      const cls = t.role === 'user' ? 'user' : 'bot';
+      const label = t.role === 'user' ? '用户' : '机器人';
+      html += `<div class="chat-msg ${{cls}}"><div class=role>${{label}}</div>${{t.content}}</div>`;
+    }}
+    html += '</div>';
+    html += `<p class=muted>共 ${{j.history.length}} 条 · 更新于 ${{j.updated_at}}</p>`;
+    box.innerHTML = html;
+    box.querySelector('.chat-box').scrollTop = 99999;
+  }} catch (e) {{ box.innerHTML = '<p style="color:#cf222e">加载失败</p>'; }}
+}}
+
+function toggleSend(idx, aid, uid) {{
+  const box = document.getElementById('send-' + idx);
+  box.classList.toggle('hidden');
+  if (!box.classList.contains('hidden')) document.getElementById('msg-' + idx).focus();
+}}
+
+async function doSend(idx, aid, uid) {{
+  const input = document.getElementById('msg-' + idx);
+  const text = input.value.trim();
+  if (!text) return;
+  input.value = '';
+  try {{
+    const r = await fetch('/users/' + encodeURIComponent(aid) + '/' + encodeURIComponent(uid) + '/send', {{
+      method: 'POST', headers: HDRS,
+      body: JSON.stringify({{ account_id: aid, wechat_user_id: uid, text: text }}),
+    }});
+    const j = await r.json();
+    if (j.ok) {{
+      input.placeholder = '✅ 已发送';
+      setTimeout(() => input.placeholder = '输入消息内容…', 2000);
+    }} else {{
+      alert('发送失败');
+    }}
+  }} catch (e) {{ alert('发送失败: ' + e); }}
+}}
+
+// 页面加载时自动刷新
+loadAccounts();
+loadUsers();
 </script>
 </body></html>"""
 
@@ -405,5 +513,20 @@ def create_app(clawbot: ClawBotApp, settings: Settings) -> FastAPI:
             "history": [{"role": t.role.value, "content": t.content} for t in session.history],
             "updated_at": session.updated_at.isoformat(),
         }
+
+    # ── 微信用户管理 ──────────────────────────────────────────────
+
+    @app.get("/users")
+    async def list_users() -> list[dict[str, Any]]:
+        """列出所有有过会话的微信用户（按最后活跃时间倒序）。"""
+
+        return db.list_sessions(settings.db_path)
+
+    @app.post("/users/{account_id}/{wechat_user_id}/send")
+    async def send_to_user(account_id: str, wechat_user_id: str, req: NotifyRequest) -> dict[str, Any]:
+        """向指定用户主动发送消息（控制台用）。"""
+
+        ok = await clawbot.notifier.notify(account_id, wechat_user_id, req.text)
+        return {"ok": ok}
 
     return app

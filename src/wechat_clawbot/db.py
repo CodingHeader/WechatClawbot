@@ -313,6 +313,34 @@ def purge_expired_data(db_path: Path, retention_days: int) -> dict[str, int]:
         conn.close()
 
 
+def list_sessions(db_path: Path, account_id: str | None = None) -> list[dict[str, Any]]:
+    """列出所有有过会话的微信用户（按最后活跃时间倒序）。"""
+
+    conn = _connect(db_path)
+    try:
+        if account_id:
+            rows = conn.execute(
+                "SELECT account_id, wechat_user_id, history_json, summary, updated_at FROM sessions WHERE account_id = ? ORDER BY updated_at DESC",
+                (account_id,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT account_id, wechat_user_id, history_json, summary, updated_at FROM sessions ORDER BY updated_at DESC"
+            ).fetchall()
+        return [
+            {
+                "account_id": r["account_id"],
+                "wechat_user_id": r["wechat_user_id"],
+                "message_count": len(json.loads(r["history_json"])),
+                "summary": r["summary"],
+                "updated_at": r["updated_at"],
+            }
+            for r in rows
+        ]
+    finally:
+        conn.close()
+
+
 def list_notifications(db_path: Path, account_id: str | None = None) -> list[Notification]:
     conn = _connect(db_path)
     try:
