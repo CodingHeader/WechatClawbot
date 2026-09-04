@@ -74,7 +74,7 @@ def render_qr_png(qr_string: str) -> bytes:
 
     qr_string 支持三种形式：
     1. ``data:image/png;base64,...`` —— 直接解码返回（iLink 返回的常见形式）。
-    2. ``http(s)://...`` 图片地址 —— 拉取后返回。
+    2. ``http(s)://...`` —— 先尝试作为图片 URL 拉取；若返回内容不是图片则用 URL 文本生成二维码。
     3. 普通文本 —— 用 qrcode 库编码为二维码（兜底）。
     """
 
@@ -84,10 +84,15 @@ def render_qr_png(qr_string: str) -> bytes:
         _, _, b64 = qr_string.partition(",")
         return base64.b64decode(b64)
 
-    if qr_string.startswith("http://") or qr_string.startswith("https://"):
+    if qr_string.startswith(("http://", "https://")):
         resp = httpx.get(qr_string, timeout=15.0, follow_redirects=True)
         resp.raise_for_status()
-        return resp.content
+        ct = resp.headers.get("content-type", "")
+        if ct.startswith("image/"):
+            return resp.content
+        # URL 返回的不是图片（如 iLink 返回的 HTML 登录页），
+        # 改为用 URL 字符串本身生成二维码
+        qr_string = resp.url  # 使用最终重定向后的 URL
 
     import qrcode
 
